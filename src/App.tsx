@@ -1,59 +1,80 @@
-import { useState } from 'react';
-import { Box, Button, Paper, Stack, TextField, Typography } from '@mui/material';
+import { styles } from './App.styles';
+import { useRef, useState } from 'react';
+import { Grid } from '@mui/material';
+import type { Credentials } from './api/greenApi/types';
+import type { Chat, Message } from './types';
+import { sendMessage } from './api/greenApi/sendMessage';
+import { clearSession, readSession, saveSession } from './session';
+import LoginForm from './components/LoginForm';
+import ChatSidebar from './components/ChatSidebar';
+import ChatWindow from './components/ChatWindow';
+import useIncomingMessages from './hooks/useIncomingMessages';
 
 export default function App() {
-  const [showChat, setShowChat] = useState(false);
+  const [credentials, setCredentials] = useState<Credentials | null>(readSession);
 
-  if (!showChat) {
-    return (
-      <Box sx={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', p: 2 }}>
-        <Paper variant="outlined" sx={{ width: '100%', maxWidth: 400, p: 3 }}>
-          <Stack spacing={3} component="form" onSubmit={(event) => {
-            event.preventDefault();
-            setShowChat(true);
-          }}>
-            <Box>
-              <Typography variant="h5" fontWeight={600}>Чат MAX</Typography>
-              <Typography color="text.secondary">Подключение через GREEN-API</Typography>
-            </Box>
-            <TextField label="idInstance" required fullWidth />
-            <TextField label="apiTokenInstance" type="password" required fullWidth />
-            <Typography variant="body2" color="text.secondary">
-              Каркас интерфейса. Подключение к API ещё не реализовано.
-            </Typography>
-            <Button type="submit" variant="contained">Продолжить</Button>
-          </Stack>
-        </Paper>
-      </Box>
-    );
+  const [chat, setChat] = useState<Chat | null>(null);
+
+  const [messages, setMessages] = useState<Message[]>([]);
+  const chatVersion = useRef(0);
+  const receivingError = useIncomingMessages(credentials, chat, setMessages);
+
+  function handleCreateChat(phoneNumber: string) {
+    chatVersion.current += 1;
+    setMessages([]);
+    setChat({
+      phoneNumber,
+      chatId: `${phoneNumber}@c.us`,
+    });
+  }
+
+  async function handleSendMessage(text: string) {
+    if (!credentials || !chat) {
+      throw new Error('Сначала войдите и создайте чат.');
+    }
+
+    const version = chatVersion.current;
+    const id = await sendMessage(credentials, chat.chatId, text);
+
+    // Ответ старого запроса не должен попадать в новый чат.
+    if (version !== chatVersion.current) return;
+
+    setMessages((previous) => [
+      ...previous,
+      { id, text, direction: 'outgoing' },
+    ]);
+  }
+
+  function handleLogin(credentials: Credentials) {
+    saveSession(credentials);
+    setCredentials(credentials);
+  }
+
+  function handleLogout() {
+    clearSession();
+    chatVersion.current += 1;
+    setMessages([]);
+    setCredentials(null);
+    setChat(null);
+  }
+
+  if (!credentials) {
+    return <LoginForm onLogin={handleLogin} />;
   }
 
   return (
-    <Box sx={{ display: 'flex', minHeight: '100dvh', flexDirection: { xs: 'column', sm: 'row' } }}>
-      <Paper square variant="outlined" sx={{ width: { xs: '100%', sm: 300 }, p: 2 }}>
-        <Stack spacing={2}>
-          <Typography variant="h6">Чат MAX</Typography>
-          <TextField label="Телефон получателя" placeholder="+7 999 123-45-67" fullWidth />
-          <Button variant="contained" disabled>Создать чат</Button>
-          <Button onClick={() => setShowChat(false)}>Выйти / сменить инстанс</Button>
-        </Stack>
-      </Paper>
-      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-        <Paper square variant="outlined" sx={{ p: 2 }}>
-          <Typography variant="h6">Переписка</Typography>
-        </Paper>
-        <Box sx={{ flex: 1, display: 'grid', placeItems: 'center', p: 3 }}>
-          <Typography color="text.secondary" textAlign="center">
-            Здесь будут сообщения выбранного собеседника
-          </Typography>
-        </Box>
-        <Paper square variant="outlined" sx={{ p: 2 }}>
-          <Stack direction="row" spacing={2}>
-            <TextField label="Сообщение" fullWidth disabled />
-            <Button variant="contained" disabled>Отправить</Button>
-          </Stack>
-        </Paper>
-      </Box>
-    </Box>
+    <Grid container sx={styles.container}>
+      <Grid size={{ xs: 12, md: 3 }} sx={styles.sidebarColumn}>
+        <ChatSidebar chat={chat} onCreateChat={handleCreateChat} onLogout={handleLogout} />
+      </Grid>
+      <Grid size={{ xs: 12, md: 9 }} sx={styles.chatColumn}>
+        <ChatWindow
+          chat={chat}
+          messages={messages}
+          onSend={handleSendMessage}
+          receivingError={receivingError}
+        />
+      </Grid>
+    </Grid>
   );
 }
